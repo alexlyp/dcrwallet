@@ -10,6 +10,7 @@ import (
 	"crypto/rand"
 	"crypto/tls"
 	"encoding/binary"
+	"fmt"
 	"net"
 	"sort"
 	"time"
@@ -1426,7 +1427,7 @@ func (w *Wallet) purchaseTickets(ctx context.Context, op errors.Op,
 			if unlockCredits {
 				for _, credit := range vspFeeCredits {
 					for _, c := range credit {
-						log.Debugf("unlocked unneeded credit for vsp fee tx: %v",
+						log.Infof("unlocked unneeded credit for vsp fee tx: %v",
 							c.OutPoint.String())
 						w.UnlockOutpoint(&c.OutPoint.Hash, c.OutPoint.Index)
 					}
@@ -1447,6 +1448,18 @@ func (w *Wallet) purchaseTickets(ctx context.Context, op errors.Op,
 			}
 			vspFeeCredits = append(vspFeeCredits, credits)
 		}
+		for i := 0; i < req.Count; i++ {
+			_, err = w.ReserveOutputsForAmount(ctx, req.SourceAccount, ticketPrice,
+				req.MinConf)
+			if errors.Is(err, errors.InsufficientBalance) {
+				lowBalance = true
+				break
+			}
+			if err != nil {
+				log.Errorf("ReserveOutputsForAmount failed: %v", err)
+				return nil, err
+			}
+		}
 		if lowBalance {
 			// When there is UTXO contention between reserved fee
 			// UTXOs and the tickets that can be purchased, UTXOs
@@ -1461,6 +1474,7 @@ func (w *Wallet) purchaseTickets(ctx context.Context, op errors.Op,
 			})
 			var freedBalance int64
 			req.Count = len(vspFeeCredits)
+			fmt.Println(req.Count, "count")
 			extraSplit := true
 			for req.Count > 1 {
 				for _, in := range vspFeeCredits[0] {
@@ -1476,9 +1490,11 @@ func (w *Wallet) purchaseTickets(ctx context.Context, op errors.Op,
 					break
 				}
 			}
+			fmt.Println("extraSplit?", extraSplit)
 			if req.Count == 1 && extraSplit {
 				remaining := total(vspFeeCredits[0])
 				if int64(ticketPrice) > remaining { // XXX still a bad estimate
+					fmt.Println("here?")
 					return nil, errors.E(errors.InsufficientBalance)
 				}
 				// A new transaction may need to be created to
