@@ -31,6 +31,8 @@ import (
 	"github.com/decred/dcrd/dcrutil/v4"
 	"github.com/decred/dcrd/txscript/v4"
 	"github.com/decred/dcrd/wire"
+
+	"github.com/davecgh/go-spew/spew"
 )
 
 // --------------------------------------------------------------------------------
@@ -567,7 +569,7 @@ func (w *Wallet) txToMultisigInternal(ctx context.Context, op errors.Op, dbtx wa
 	// Instead of taking reward addresses by arg, just create them now  and
 	// automatically find all eligible outputs from all current utxos.
 	eligible, err := w.findEligibleOutputsAmount(dbtx, account, minconf,
-		amountRequired, topHeight)
+		amountRequired, topHeight, false)
 	if err != nil {
 		return txToMultisigError(errors.E(op, err))
 	}
@@ -1761,7 +1763,7 @@ func (w *Wallet) ReserveOutputsForAmount(ctx context.Context, account uint32, am
 		_, tipHeight := w.txStore.MainChainTip(dbtx)
 
 		var err error
-		outputs, err = w.findEligibleOutputsAmount(dbtx, account, minconf, amount, tipHeight)
+		outputs, err = w.findEligibleOutputsAmount(dbtx, account, minconf, amount, tipHeight, true)
 		if err != nil {
 			return err
 		}
@@ -1872,7 +1874,7 @@ func (w *Wallet) findEligibleOutputs(dbtx walletdb.ReadTx, account uint32, minco
 // findEligibleOutputsAmount uses wtxmgr to find a number of unspent outputs
 // while doing maturity checks there.
 func (w *Wallet) findEligibleOutputsAmount(dbtx walletdb.ReadTx, account uint32, minconf int32,
-	amount dcrutil.Amount, currentHeight int32) ([]Input, error) {
+	amount dcrutil.Amount, currentHeight int32, smallestFirst bool) ([]Input, error) {
 
 	addrmgrNs := dbtx.ReadBucket(waddrmgrNamespaceKey)
 
@@ -1880,14 +1882,24 @@ func (w *Wallet) findEligibleOutputsAmount(dbtx walletdb.ReadTx, account uint32,
 	if err != nil {
 		return nil, err
 	}
-	shuffle(len(unspent), func(i, j int) {
-		unspent[i], unspent[j] = unspent[j], unspent[i]
-	})
-
+	spew.Dump(unspent)
+	if !smallestFirst {
+		shuffle(len(unspent), func(i, j int) {
+			unspent[i], unspent[j] = unspent[j], unspent[i]
+		})
+	} else {
+		// This will sort the available utxos by smallest first so all small utxos
+		// will be used first.
+		sort.Slice(unspent, func(i, j int) bool {
+			return unspent[i].Amount < unspent[j].Amount
+		})
+	}
+	spew.Dump(unspent)
 	eligible := make([]Input, 0, len(unspent))
 	var outTotal dcrutil.Amount
 	for i := range unspent {
 		output := unspent[i]
+		spew.Dump(unspent[i].Amount)
 
 		// Locked unspent outputs are skipped.
 		if _, locked := w.lockedOutpoints[outpoint{output.Hash, output.Index}]; locked {
