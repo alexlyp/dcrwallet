@@ -21,6 +21,8 @@ import (
 	"github.com/decred/dcrd/dcrutil/v4"
 	"github.com/decred/dcrd/txscript/v4"
 	"github.com/decred/dcrd/wire"
+
+	"github.com/davecgh/go-spew/spew"
 )
 
 var prng lockedRand
@@ -381,6 +383,8 @@ func (fp *feePayment) receiveFeeAddress() error {
 	if err != nil {
 		return err
 	}
+	fmt.Println(parentHash)
+	spew.Dump(requestBody)
 	err = fp.client.post(ctx, "/api/v3/feeaddress", fp.commitmentAddr, &response,
 		json.RawMessage(requestBody))
 	if err != nil {

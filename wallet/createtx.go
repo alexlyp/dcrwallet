@@ -23,6 +23,7 @@ import (
 	"decred.org/dcrwallet/v2/wallet/txsizes"
 	"decred.org/dcrwallet/v2/wallet/udb"
 	"decred.org/dcrwallet/v2/wallet/walletdb"
+	"github.com/davecgh/go-spew/spew"
 	"github.com/decred/dcrd/blockchain/stake/v4"
 	blockchain "github.com/decred/dcrd/blockchain/standalone/v2"
 	"github.com/decred/dcrd/chaincfg/chainhash"
@@ -31,8 +32,6 @@ import (
 	"github.com/decred/dcrd/dcrutil/v4"
 	"github.com/decred/dcrd/txscript/v4"
 	"github.com/decred/dcrd/wire"
-
-	"github.com/davecgh/go-spew/spew"
 )
 
 // --------------------------------------------------------------------------------
@@ -1404,6 +1403,7 @@ func (w *Wallet) purchaseTickets(ctx context.Context, op errors.Op,
 	}()
 
 	var vspFeeCredits [][]Input
+	var ticketCredits [][]Input
 	unlockCredits := true
 	total := func(ins []Input) (v int64) {
 		for _, in := range ins {
@@ -1425,9 +1425,17 @@ func (w *Wallet) purchaseTickets(ctx context.Context, op errors.Op,
 
 		// Reserve outputs for number of buys.
 		vspFeeCredits = make([][]Input, 0, req.Count)
+		ticketCredits = make([][]Input, 0, req.Count)
 		defer func() {
 			if unlockCredits {
 				for _, credit := range vspFeeCredits {
+					for _, c := range credit {
+						log.Infof("unlocked unneeded credit for vsp fee tx: %v",
+							c.OutPoint.String())
+						w.UnlockOutpoint(&c.OutPoint.Hash, c.OutPoint.Index)
+					}
+				}
+				for _, credit := range ticketCredits {
 					for _, c := range credit {
 						log.Infof("unlocked unneeded credit for vsp fee tx: %v",
 							c.OutPoint.String())
@@ -1448,10 +1456,14 @@ func (w *Wallet) purchaseTickets(ctx context.Context, op errors.Op,
 				log.Errorf("ReserveOutputsForAmount failed: %v", err)
 				return nil, err
 			}
+			for _, c := range credits {
+				log.Infof("locked credit for vsp fee tx: %v",
+					c.OutPoint.String())
+			}
 			vspFeeCredits = append(vspFeeCredits, credits)
 		}
 		for i := 0; i < req.Count; i++ {
-			_, err = w.ReserveOutputsForAmount(ctx, req.SourceAccount, ticketPrice,
+			credits, err := w.ReserveOutputsForAmount(ctx, req.SourceAccount, ticketPrice,
 				req.MinConf)
 			if errors.Is(err, errors.InsufficientBalance) {
 				lowBalance = true
@@ -1461,7 +1473,21 @@ func (w *Wallet) purchaseTickets(ctx context.Context, op errors.Op,
 				log.Errorf("ReserveOutputsForAmount failed: %v", err)
 				return nil, err
 			}
+			for _, c := range credits {
+				log.Infof("locked credit for ticket tx: %v",
+					c.OutPoint.String())
+			}
+			ticketCredits = append(ticketCredits, credits)
 		}
+		// unlock ticket credits
+		for _, credit := range ticketCredits {
+			for _, c := range credit {
+				log.Infof("unlocked unneeded credit for ticket tx: %v",
+					c.OutPoint.String())
+				w.UnlockOutpoint(&c.OutPoint.Hash, c.OutPoint.Index)
+			}
+		}
+		fmt.Println("lowbalance?", lowBalance)
 		if lowBalance {
 			// When there is UTXO contention between reserved fee
 			// UTXOs and the tickets that can be purchased, UTXOs
@@ -1494,11 +1520,16 @@ func (w *Wallet) purchaseTickets(ctx context.Context, op errors.Op,
 			}
 			fmt.Println("extraSplit?", extraSplit)
 			if req.Count == 1 && extraSplit {
-				remaining := total(vspFeeCredits[0])
+				remaining := int64(0)
+				for _, credit := range vspFeeCredits {
+					remaining += total(credit)
+				}
+				fmt.Println(remaining, ticketPrice)
 				if int64(ticketPrice) > remaining { // XXX still a bad estimate
 					fmt.Println("here?")
 					return nil, errors.E(errors.InsufficientBalance)
 				}
+				fmt.Println("need utxo split!")
 				// A new transaction may need to be created to
 				// split a single UTXO into two: one to pay the
 				// VSP fee, and a second to fund the ticket
@@ -1525,6 +1556,7 @@ func (w *Wallet) purchaseTickets(ctx context.Context, op errors.Op,
 		case req.VSPAddress != nil:
 			splitTx, splitOutputIndexes, err = w.vspSplit(ctx, req, neededPerTicket, vspFee)
 		default:
+			spew.Dump(w.lockedOutpoints)
 			splitTx, splitOutputIndexes, err = w.individualSplit(ctx, req, neededPerTicket)
 		}
 		if errors.Is(err, errors.InsufficientBalance) && req.Count > 1 {
@@ -1723,6 +1755,7 @@ func (w *Wallet) purchaseTickets(ctx context.Context, op errors.Op,
 
 			feeTx := wire.NewMsgTx()
 			for _, in := range vspFeeCredits[i] {
+				fmt.Println("consuming saved vspFeeCredits for fee", in.PrevOut.Value)
 				feeTx.AddTxIn(wire.NewTxIn(&in.OutPoint, in.PrevOut.Value, nil))
 			}
 
@@ -1882,7 +1915,6 @@ func (w *Wallet) findEligibleOutputsAmount(dbtx walletdb.ReadTx, account uint32,
 	if err != nil {
 		return nil, err
 	}
-	spew.Dump(unspent)
 	if !smallestFirst {
 		shuffle(len(unspent), func(i, j int) {
 			unspent[i], unspent[j] = unspent[j], unspent[i]
@@ -1894,12 +1926,10 @@ func (w *Wallet) findEligibleOutputsAmount(dbtx walletdb.ReadTx, account uint32,
 			return unspent[i].Amount < unspent[j].Amount
 		})
 	}
-	spew.Dump(unspent)
 	eligible := make([]Input, 0, len(unspent))
 	var outTotal dcrutil.Amount
 	for i := range unspent {
 		output := unspent[i]
-		spew.Dump(unspent[i].Amount)
 
 		// Locked unspent outputs are skipped.
 		if _, locked := w.lockedOutpoints[outpoint{output.Hash, output.Index}]; locked {
