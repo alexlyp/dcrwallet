@@ -568,7 +568,7 @@ func (w *Wallet) txToMultisigInternal(ctx context.Context, op errors.Op, dbtx wa
 	// Instead of taking reward addresses by arg, just create them now  and
 	// automatically find all eligible outputs from all current utxos.
 	eligible, err := w.findEligibleOutputsAmount(dbtx, account, minconf,
-		amountRequired, topHeight, false)
+		amountRequired, topHeight)
 	if err != nil {
 		return txToMultisigError(errors.E(op, err))
 	}
@@ -1437,7 +1437,7 @@ func (w *Wallet) purchaseTickets(ctx context.Context, op errors.Op,
 				}
 				for _, credit := range ticketCredits {
 					for _, c := range credit {
-						log.Infof("unlocked unneeded credit for vsp fee tx: %v",
+						log.Infof("unlocked unneeded credit for ticket tx: %v",
 							c.OutPoint.String())
 						w.UnlockOutpoint(&c.OutPoint.Hash, c.OutPoint.Index)
 					}
@@ -1482,7 +1482,7 @@ func (w *Wallet) purchaseTickets(ctx context.Context, op errors.Op,
 		// unlock ticket credits
 		for _, credit := range ticketCredits {
 			for _, c := range credit {
-				log.Infof("unlocked unneeded credit for ticket tx: %v",
+				log.Infof("unlocked credit for ticket tx: %v",
 					c.OutPoint.String())
 				w.UnlockOutpoint(&c.OutPoint.Hash, c.OutPoint.Index)
 			}
@@ -1796,7 +1796,7 @@ func (w *Wallet) ReserveOutputsForAmount(ctx context.Context, account uint32, am
 		_, tipHeight := w.txStore.MainChainTip(dbtx)
 
 		var err error
-		outputs, err = w.findEligibleOutputsAmount(dbtx, account, minconf, amount, tipHeight, true)
+		outputs, err = w.findEligibleOutputsAmount(dbtx, account, minconf, amount, tipHeight)
 		if err != nil {
 			return err
 		}
@@ -1907,7 +1907,7 @@ func (w *Wallet) findEligibleOutputs(dbtx walletdb.ReadTx, account uint32, minco
 // findEligibleOutputsAmount uses wtxmgr to find a number of unspent outputs
 // while doing maturity checks there.
 func (w *Wallet) findEligibleOutputsAmount(dbtx walletdb.ReadTx, account uint32, minconf int32,
-	amount dcrutil.Amount, currentHeight int32, smallestFirst bool) ([]Input, error) {
+	amount dcrutil.Amount, currentHeight int32) ([]Input, error) {
 
 	addrmgrNs := dbtx.ReadBucket(waddrmgrNamespaceKey)
 
@@ -1915,17 +1915,11 @@ func (w *Wallet) findEligibleOutputsAmount(dbtx walletdb.ReadTx, account uint32,
 	if err != nil {
 		return nil, err
 	}
-	if !smallestFirst {
-		shuffle(len(unspent), func(i, j int) {
-			unspent[i], unspent[j] = unspent[j], unspent[i]
-		})
-	} else {
-		// This will sort the available utxos by smallest first so all small utxos
-		// will be used first.
-		sort.Slice(unspent, func(i, j int) bool {
-			return unspent[i].Amount < unspent[j].Amount
-		})
-	}
+	// This will sort the available utxos by smallest first so all small utxos
+	// will be used first.
+	sort.Slice(unspent, func(i, j int) bool {
+		return unspent[i].Amount < unspent[j].Amount
+	})
 	eligible := make([]Input, 0, len(unspent))
 	var outTotal dcrutil.Amount
 	for i := range unspent {
