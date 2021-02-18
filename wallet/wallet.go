@@ -1622,7 +1622,7 @@ func (w *Wallet) PurchaseTickets(ctx context.Context, n NetworkBackend,
 	if err != nil {
 		return nil, err
 	}
-	err = w.publishAndWatch(ctx, op, nil, a.atx, a.watch)
+	err = w.publishAndWatch(ctx, op, nil, a.atx.Tx, a.watch)
 	if err != nil {
 		return nil, err
 	}
