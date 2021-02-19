@@ -1915,11 +1915,10 @@ func (w *Wallet) findEligibleOutputsAmount(dbtx walletdb.ReadTx, account uint32,
 	if err != nil {
 		return nil, err
 	}
-	// This will sort the available utxos by smallest first so all small utxos
-	// will be used first.
-	sort.Slice(unspent, func(i, j int) bool {
-		return unspent[i].Amount < unspent[j].Amount
+	shuffle(len(unspent), func(i, j int) {
+		unspent[i], unspent[j] = unspent[j], unspent[i]
 	})
+
 	eligible := make([]Input, 0, len(unspent))
 	var outTotal dcrutil.Amount
 	for i := range unspent {
