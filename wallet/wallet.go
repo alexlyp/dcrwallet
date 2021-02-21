@@ -1575,6 +1575,7 @@ func (w *Wallet) PurchaseTickets(ctx context.Context, n NetworkBackend,
 
 	resp, err := w.purchaseTickets(ctx, op, n, req)
 	if err == nil || !errors.Is(err, errVSPFeeRequiresUTXOSplit) || req.DontSignTx {
+		fmt.Println("here?", err == nil, !errors.Is(err, errVSPFeeRequiresUTXOSplit), req.DontSignTx)
 		return resp, err
 	}
 

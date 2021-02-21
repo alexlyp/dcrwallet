@@ -10,6 +10,7 @@ import (
 	"crypto/rand"
 	"crypto/tls"
 	"encoding/binary"
+	"fmt"
 	"net"
 	"sort"
 	"time"
@@ -1712,6 +1713,7 @@ func (w *Wallet) purchaseTickets(ctx context.Context, op errors.Op,
 
 	if !req.DontSignTx && req.VSPFeePaymentProcess != nil {
 		unlockCredits = false
+		ticketsFailedProcess := make([]string, 0, len(purchaseTicketsResponse.TicketHashes))
 		for i, ticketHash := range purchaseTicketsResponse.TicketHashes {
 			// set vsp fee as processing, so we can know it started to be
 			// processed.
@@ -1733,6 +1735,7 @@ func (w *Wallet) purchaseTickets(ctx context.Context, op errors.Op,
 			if err != nil {
 				log.Errorf("vsp ticket %v fee proccessment failed: %v", ticketHash, err)
 				rec.FeeTxStatus = uint32(udb.VSPFeeProcessErrored)
+				ticketsFailedProcess = append(ticketsFailedProcess, ticketHash.String())
 				err = w.UpdateVSPTicket(ctx, ticketHash, rec)
 				if err != nil {
 					return nil, err
@@ -1747,6 +1750,18 @@ func (w *Wallet) purchaseTickets(ctx context.Context, op errors.Op,
 			_, err = udb.NewTxRecordFromMsgTx(feeTx, time.Now())
 			if err != nil {
 				return nil, err
+			}
+			if len(ticketsFailedProcess) > 0 {
+				ticketsStr := ""
+				for i, ticket := range ticketsFailedProcess {
+					if i == 0 {
+						ticketsStr = ticket
+					} else {
+						ticketsStr += ", " + ticket
+					}
+				}
+				err = fmt.Errorf("purchase tickets successful, but ticket fees failed: %v", ticketsStr)
+				return purchaseTicketsResponse, errors.E(op, err)
 			}
 		}
 	}
